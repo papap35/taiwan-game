@@ -1,0 +1,98 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: 測試與建置
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+
+  deploy-backend:
+    name: 部署後端（Render）
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: 觸發 Render deploy hook
+        env:
+          HOOK: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+        run: |
+          if [ -z "$HOOK" ]; then
+            echo "::warning::未設定 RENDER_DEPLOY_HOOK_URL，略過後端部署"
+            exit 0
+          fi
+          curl -fsS -X POST "$HOOK" > /dev/null
+          echo "已觸發 Render 部署" >> "$GITHUB_STEP_SUMMARY"
+
+  deploy-frontend:
+    name: 部署前端（Vercel）
+    needs: test
+    # main 推送 → 正式環境；同 repo 的 PR → 預覽環境（fork 的 PR 拿不到 secrets，略過）
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    environment: ${{ github.event_name == 'push' && 'production' || 'preview' }}
+    env:
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      BACKEND_URL: ${{ vars.BACKEND_URL }}
+      VERCEL_ENV: ${{ github.event_name == 'push' && 'production' || 'preview' }}
+      PROD_FLAG: ${{ github.event_name == 'push' && '--prod' || '' }}
+    steps:
+      - name: 檢查設定
+        id: check
+        run: |
+          missing=""
+          for v in VERCEL_TOKEN VERCEL_ORG_ID VERCEL_PROJECT_ID BACKEND_URL; do
+            [ -z "${!v}" ] && missing="$missing $v"
+          done
+          if [ -n "$missing" ]; then
+            echo "::warning::缺少設定:$missing，略過 Vercel 部署（請見 README 的部署章節）"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.check.outputs.skip != 'true'
+      - uses: actions/setup-node@v4
+        if: steps.check.outputs.skip != 'true'
+        with:
+          node-version: 22
+          cache: npm
+      - name: 安裝 Vercel CLI
+        if: steps.check.outputs.skip != 'true'
+        run: npm install --global vercel@64.3.1
+      - name: 產生 vercel.json
+        if: steps.check.outputs.skip != 'true'
+        run: node scripts/vercel-config.mjs
+      - name: 建置
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          vercel pull --yes --environment="$VERCEL_ENV" --token="$VERCEL_TOKEN"
+          VITE_SOCKET_URL="$BACKEND_URL" vercel build $PROD_FLAG --token="$VERCEL_TOKEN"
+      - name: 部署
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          url=$(vercel deploy --prebuilt $PROD_FLAG --token="$VERCEL_TOKEN")
+          echo "### 🚀 Vercel ($VERCEL_ENV)" >> "$GITHUB_STEP_SUMMARY"
+          echo "$url" >> "$GITHUB_STEP_SUMMARY"

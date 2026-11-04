@@ -18,11 +18,13 @@ export function createArcadeServer({
   allowGuest = true,
   staticDir = null,
   verifyGoogleToken = null, // 測試用：可替換 Google token 驗證
+  corsOrigins = [], // 前端與後端分開部署時（例如 Vercel + Render），允許 socket 連線的前端網址
+  trustProxy = false,
 }) {
   if (!jwtSecret) throw new Error('jwtSecret is required');
   const app = express();
   const server = http.createServer(app);
-  const io = new SocketServer(server, { cors: { origin: false } });
+  const io = new SocketServer(server, { cors: { origin: corsOrigins.length ? corsOrigins : false, credentials: true } });
 
   // ---- 線上狀態 ----
   const online = new Map(); // userId -> socket 數量
@@ -38,7 +40,18 @@ export function createArcadeServer({
   const signSession = (userId) => jwt.sign({ uid: userId }, jwtSecret, { expiresIn: '30d' });
   const readSession = (token) => {
     try {
-      return jwt.verify(token, jwtSecret).uid;
+      const p = jwt.verify(token, jwtSecret);
+      return p.typ ? null : p.uid; // 短期 socket token 不能當作登入 session
+    } catch {
+      return null;
+    }
+  };
+  // 給跨網域 socket 連線用的短期 token（前端在 Vercel、後端在別的網域時，cookie 送不到 socket）
+  const signSocketToken = (userId) => jwt.sign({ uid: userId, typ: 'socket' }, jwtSecret, { expiresIn: '10m' });
+  const readSocketToken = (token) => {
+    try {
+      const p = jwt.verify(token, jwtSecret);
+      return p.typ === 'socket' ? p.uid : null;
     } catch {
       return null;
     }
@@ -51,6 +64,7 @@ export function createArcadeServer({
   });
 
   app.disable('x-powered-by');
+  if (trustProxy) app.set('trust proxy', trustProxy);
   app.use(express.json({ limit: '32kb' }));
   app.use(cookieParser());
 
@@ -122,6 +136,7 @@ export function createArcadeServer({
   api.use(auth);
 
   api.get('/me', h((req) => services.me(req.uid)));
+  api.get('/auth/socket-token', (req, res) => res.json({ token: signSocketToken(req.uid) }));
   api.patch('/me', h((req) => {
     services.updateProfile(req.uid, req.body || {});
     const me = services.me(req.uid);
@@ -202,7 +217,7 @@ export function createArcadeServer({
       const i = c.indexOf('=');
       return [c.slice(0, i).trim(), decodeURIComponent(c.slice(i + 1))];
     }));
-    const uid = readSession(cookies[COOKIE]);
+    const uid = readSocketToken(socket.handshake.auth?.token) || readSession(cookies[COOKIE]);
     if (!uid || !db.prepare('SELECT 1 FROM users WHERE id = ?').get(uid)) return next(new Error('unauthorized'));
     socket.data.uid = uid;
     next();
