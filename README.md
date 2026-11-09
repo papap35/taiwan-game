@@ -78,49 +78,25 @@ Vercel 是 serverless 平台，不支援長時間的 WebSocket，也沒有永久
 
 - `/api` 走 Vercel 同網域 rewrite，登入 cookie 是第一方 cookie。
 - Socket.io 直連 Render（`VITE_SOCKET_URL`），連線前先向 `/api/auth/socket-token` 取得 10 分鐘有效的 token。
-- GitHub Actions（`.github/workflows/ci.yml`）：每個 PR 與 main 推送都會跑測試與建置；測試通過後，**main → 正式部署**（Render + Vercel），**PR → Vercel 預覽網址**。
+- **前端**：由 Vercel 的 GitHub 整合自動部署，設定在 `vercel.json`。每個分支 / PR 會有預覽網址，main 會部署到正式環境。
+- **後端**：GitHub Actions（`.github/workflows/ci.yml`）在每個 PR 與 main 推送跑測試與建置；main 測試通過後呼叫 Render deploy hook 部署後端。
 
 ### 一次性設定
 
 **1. Render（後端）**
 
 1. Render Dashboard → **New → Blueprint**，選這個 repo，會讀取 `render.yaml` 建立 `taiwan-arcade-api`。
-2. 填入環境變數：`GOOGLE_CLIENT_ID`、`CORS_ORIGIN`（Vercel 網址，第 2 步建立後再回來填）。`JWT_SECRET` 會自動產生。
-3. 服務的 **Settings → Deploy Hook** 複製網址。
-4. 記下服務網址，例如 `https://taiwan-arcade-api.onrender.com`。
+2. 填入環境變數：`GOOGLE_CLIENT_ID`、`CORS_ORIGIN`（Vercel 正式網址；多個網址用逗號分隔，可加上預覽網址）。`JWT_SECRET` 會自動產生。
+3. 服務的 **Settings → Deploy Hook** 複製網址，填到 GitHub repo → Settings → Secrets and variables → Actions 的 Secret `RENDER_DEPLOY_HOOK_URL`（沒填的話 CI 只會顯示警告並略過後端部署）。
 
 > `render.yaml` 使用 `starter` 方案，因為 SQLite 需要永久磁碟（免費方案沒有磁碟，重新部署或休眠後資料會消失）。`autoDeploy: false` 讓部署只由 CI 在測試通過後觸發。
 
 **2. Vercel（前端）**
 
-1. 在本機連結專案（只做一次，會產生 `.vercel/project.json`）：
+1. Vercel → **Add New → Project**，匯入這個 GitHub repo（Framework 選 Other 即可，其餘設定都在 `vercel.json`）。
+2. 如果 Render 服務網址不是 `https://taiwan-arcade-api.onrender.com`，修改 `vercel.json` 裡的兩處網址：`/api` rewrite 的目的地，以及 `buildCommand` 中 `VITE_SOCKET_URL` 的預設值（或在 Vercel 專案設定環境變數 `VITE_SOCKET_URL`）。
 
-```bash
-npx vercel@64.3.1 link
-```
-
-2. 從 `.vercel/project.json` 取得 `orgId` 與 `projectId`；到 Vercel → Account Settings → **Tokens** 建立 token。
-3. 關掉 Vercel 專案的 Git 自動部署（Settings → Git），改由 GitHub Actions 部署，避免重複。
-
-**3. GitHub（repo → Settings → Secrets and variables → Actions）**
-
-| 類型 | 名稱 | 內容 |
-| --- | --- | --- |
-| Secret | `VERCEL_TOKEN` | Vercel token |
-| Secret | `VERCEL_ORG_ID` | `.vercel/project.json` 的 `orgId` |
-| Secret | `VERCEL_PROJECT_ID` | `.vercel/project.json` 的 `projectId` |
-| Secret | `RENDER_DEPLOY_HOOK_URL` | Render deploy hook 網址 |
-| Variable | `BACKEND_URL` | Render 服務網址（https、不含結尾斜線） |
-
-缺少設定時，部署步驟會顯示警告並略過，不會讓 CI 失敗。
-
-**4. Google 登入**：在 Google Cloud Console 的 OAuth 用戶端，把 Vercel 網址加入「已授權的 JavaScript 來源」。
-
-手動產生 `vercel.json`（例如想在本機用 Vercel CLI 部署）：
-
-```bash
-BACKEND_URL=https://taiwan-arcade-api.onrender.com node scripts/vercel-config.mjs
-```
+**3. Google 登入**：在 Google Cloud Console 的 OAuth 用戶端，把 Vercel 網址加入「已授權的 JavaScript 來源」。
 
 ## 專案結構
 
@@ -131,8 +107,6 @@ server/
   services.js    商業邏輯（錢包、遊戲結算、好友、群組、訊息、成就…）
   catalog.js     遊戲 / 商品 / 成就設定
   db.js          SQLite schema
-scripts/
-  vercel-config.mjs  產生 vercel.json（/api rewrite 到後端）
 client/
   src/lobby/     2D 像素遊戲場（地圖、角色 sprite、移動與碰撞）
   src/games/     3D 遊戲（Three.js + cannon-es 物理）
