@@ -34,7 +34,15 @@ export const api = {
 let socket = null;
 export function connectSocket() {
   if (socket) return socket;
-  socket = io({ withCredentials: true, transports: ['websocket', 'polling'] });
+  // 部署在 Vercel 時，API 走同網域 rewrite，socket 則直連後端（VITE_SOCKET_URL），用短期 token 驗證
+  const url = import.meta.env.VITE_SOCKET_URL || undefined;
+  socket = io(url, {
+    withCredentials: true,
+    transports: ['websocket', 'polling'],
+    auth: (cb) => {
+      request('GET', '/auth/socket-token').then(({ token }) => cb({ token }), () => cb({}));
+    },
+  });
   return socket;
 }
 export function getSocket() {

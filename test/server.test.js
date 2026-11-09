@@ -134,3 +134,26 @@ test('friends, groups, messages', async () => {
   const prof = await a.get(`/users/${ub.id}`);
   assert.equal(prof.data.relation, 'friend');
 });
+
+test('socket token: connects cross-origin, cannot be used as session cookie', async () => {
+  const { io: ioc } = await import('socket.io-client');
+  const a = client();
+  await a.post('/auth/guest', { name: 'Sock' });
+  const { data } = await a.get('/auth/socket-token');
+  assert.ok(data.token);
+  const port = srv.server.address().port;
+  const ok = await new Promise((resolve) => {
+    const s = ioc(`http://127.0.0.1:${port}`, { auth: { token: data.token }, transports: ['websocket'] });
+    s.on('connect', () => { s.disconnect(); resolve(true); });
+    s.on('connect_error', () => { s.disconnect(); resolve(false); });
+  });
+  assert.equal(ok, true);
+  const bad = await new Promise((resolve) => {
+    const s = ioc(`http://127.0.0.1:${port}`, { auth: { token: 'nope' }, transports: ['websocket'] });
+    s.on('connect', () => { s.disconnect(); resolve(true); });
+    s.on('connect_error', () => { s.disconnect(); resolve(false); });
+  });
+  assert.equal(bad, false);
+  const res = await fetch(base + '/me', { headers: { cookie: `arcade_session=${data.token}` } });
+  assert.equal(res.status, 401);
+});

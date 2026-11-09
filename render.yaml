@@ -1,0 +1,32 @@
+# Render Blueprint：後端 API + Socket.io（需要 WebSocket 與永久磁碟，所以不放 Vercel）
+services:
+  - type: web
+    name: taiwan-arcade-api
+    runtime: node
+    plan: starter # 永久磁碟（SQLite）需要付費方案；免費方案沒有磁碟，重新部署或休眠後資料會消失
+    region: singapore
+    buildCommand: npm ci --omit=dev
+    startCommand: npm start
+    healthCheckPath: /api/config
+    autoDeploy: false # 由 GitHub Actions 在測試通過後呼叫 deploy hook 部署
+    disk:
+      name: arcade-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: NODE_ENV
+        value: production
+      - key: DB_FILE
+        value: /var/data/arcade.db
+      - key: JWT_SECRET
+        generateValue: true
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: CORS_ORIGIN # Vercel 前端網址，例如 https://taiwan-arcade.vercel.app（多個用逗號分隔）
+        sync: false
+      - key: ALLOW_GUEST
+        value: "true"
+      - key: TRUST_PROXY # 經過 Vercel rewrite + Render 兩層代理，才能取得真實 IP 做速率限制
+        value: "2"

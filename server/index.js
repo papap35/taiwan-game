@@ -23,6 +23,8 @@ const { server } = createArcadeServer({
   googleClientId: process.env.GOOGLE_CLIENT_ID || '',
   allowGuest: process.env.ALLOW_GUEST !== 'false',
   staticDir: path.join(root, 'client', 'dist'),
+  corsOrigins: (process.env.CORS_ORIGIN || '').split(',').map((s) => s.trim().replace(/\/$/, '')).filter(Boolean),
+  trustProxy: process.env.TRUST_PROXY ? (/^\d+$/.test(process.env.TRUST_PROXY) ? Number(process.env.TRUST_PROXY) : process.env.TRUST_PROXY) : false,
 });
 
 const port = Number(process.env.PORT) || 3000;
